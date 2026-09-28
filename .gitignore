@@ -6,3 +6,17 @@
 .DS_Store
 .idea/
 .vscode/
+
+# Local n8n data (contains database, encryption key and credentials)
+.n8n/
+*.sqlite
+*.sqlite-journal
+
+# Local workflow exports / backups (may contain credentials or pinned data)
+backups/
+*.backup.json
+
+# Dependencies and editor/OS artifacts
+node_modules/
+Thumbs.db
+*.swp
