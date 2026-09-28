@@ -1,0 +1,583 @@
+{
+  "name": "n8n Job Application Mail Tracker",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "87bc1ccb-46e5-4425-9fee-60051e6334b4",
+      "name": "Email Trigger (IMAP)"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9680776c-4a92-45f1-9749-bde05bdb7e7f",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "9a07533b-15ef-4843-a7c1-23b3d30e4c10",
+              "name": "from",
+              "value": "={{ $json.from }}",
+              "type": "string"
+            },
+            {
+              "id": "0a596e50-8e09-4d8d-ad1b-a53006e46513",
+              "name": "text",
+              "value": "={{ $json.textPlain }}",
+              "type": "string"
+            },
+            {
+              "id": "11f611d2-00e2-495f-b5fa-9bc37ab6552b",
+              "name": "searchText",
+              "value": "={{ (($json.subject || '') + ' ' + ($json.textPlain || '')).toLowerCase() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        192,
+        0
+      ],
+      "id": "b06824d7-2fb8-4f41-9bba-745fc5dd7934",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.searchText }}",
+                    "rightValue": "(leider|absage|nicht berücksichtigen|nicht weiter berücksichtigen|anderen bewerber|andere bewerber|anders entschieden|nicht in die engere auswahl|bewerbungsprozess nicht fortsetzen|bewerbung nicht weiterverfolgen|keine passende position)",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "id": "3d15992e-2c5a-4859-8b83-3bae99a8ac29"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Absage"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "f5b7e773-e8c6-4074-86c0-cbf969259af3",
+                    "leftValue": "={{ $json.searchText }}",
+                    "rightValue": "(vorstellungsgespräch|kennenlerngespräch|kennenlernen|interview|einladung zum gespräch|persönliches gespräch|telefoninterview|video.?interview|termin vereinbaren|termin für ein gespräch|wir möchten sie kennenlernen)",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Einladung"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "7ee32613-454d-4441-beea-af95840d0063",
+                    "leftValue": "={{ $json.searchText }}",
+                    "rightValue": "(zusage|stellenangebot|jobangebot|arbeitsvertrag|vertrag zusenden|willkommen im team|stelle anbieten|position anbieten|wir freuen uns.{0,50}mitteilen|wir möchten ihnen.{0,40}anbieten)",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Zusage"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "e7399574-b5a5-4013-9d37-99d1c68f3756",
+                    "leftValue": "={{ $json.searchText }}",
+                    "rightValue": "(bewerbung erhalten|bewerbung eingegangen|eingang ihrer bewerbung|vielen dank für ihre bewerbung|danke für ihre bewerbung|bewerbungsunterlagen erhalten|unterlagen erhalten|bewerbung wird geprüft|unterlagen werden geprüft|wir prüfen ihre bewerbung)",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Bewerbung"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Unbekannt"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        -32
+      ],
+      "id": "775b1df7-5955-49c1-836f-4804134c7e80",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "numberInputs": 5
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1472,
+        -32
+      ],
+      "id": "79222d22-93fa-4807-9e3b-ee338f27cc57",
+      "name": "Merge",
+      "alwaysOutputData": false,
+      "executeOnce": false,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ba0826a9-1aae-4945-9049-4bb7cc8fc770",
+              "name": "status",
+              "value": "Absage",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        912,
+        -288
+      ],
+      "id": "a744f9e3-4f5a-4d8a-a55f-c3ef2949c3ab",
+      "name": "Absage"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "508b099d-be87-4b6b-91e2-2d1c072c4969",
+              "name": "status",
+              "value": "Einladung",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        912,
+        -96
+      ],
+      "id": "9a04ddaa-d127-4822-9963-cbcfdadf0c5f",
+      "name": "Einladung"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4dab55ee-0958-47f0-9e73-f0db46870d4b",
+              "name": "status",
+              "value": "Unbekannt",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        928,
+        400
+      ],
+      "id": "6a406feb-0676-4c07-be34-8d8d1d36fe92",
+      "name": "Unbekannt"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "bewerbungen",
+          "mode": "list",
+          "cachedResultName": "bewerbungen"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sender": "={{ $json.from }}",
+            "subject": "={{ $json.subject }}",
+            "mail_text": "={{ $json.text }}",
+            "status": "={{ $json.status }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "sender",
+              "displayName": "sender",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "mail_text",
+              "displayName": "mail_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1696,
+        0
+      ],
+      "id": "7fc698d5-d443-4efc-b11b-b7daaf23b9e9",
+      "name": "Insert rows in a table"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=📩 Neue Bewerbungs-Mail  Status: {{ $json.status }}  Von: {{ $json.sender }}  Betreff: {{ $json.subject }}  Nachricht: {{ $json.mail_text }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        0
+      ],
+      "id": "e16096f1-b247-4cd9-bcb4-3ae36d030d3d",
+      "name": "Send a text message",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a90098b5-22ed-4c64-810f-f3070c1e2efb",
+              "name": "status",
+              "value": "Bewerbung",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        912,
+        240
+      ],
+      "id": "a3df9afb-a80b-4d5c-bc4b-014e99f8e479",
+      "name": "Bewerbung"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d017a4e3-ffaf-4e32-ad88-94e6957eaa02",
+              "name": "status",
+              "value": "Zusage",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        912,
+        80
+      ],
+      "id": "7c771140-c96c-464a-b11f-505c92b4ccab",
+      "name": "Zusage"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Absage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Einladung",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Zusage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bewerbung",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unbekannt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Absage": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Einladung": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Unbekannt": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert rows in a table": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bewerbung": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Zusage": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
