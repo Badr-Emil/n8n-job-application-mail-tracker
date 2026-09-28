@@ -1,8 +1,18 @@
 # n8n Job Application Mail Tracker
 
-An [n8n](https://n8n.io/) workflow that automatically tracks job application emails. It reads incoming emails via IMAP, classifies them with rule-based regular expressions (no AI or external API), stores the result in PostgreSQL, and sends a notification to Telegram.
+**Hybrid rule-based + AI job application email classification** with [n8n](https://n8n.io/).
+
+The workflow reads incoming emails via IMAP, classifies them, stores the result in PostgreSQL, and sends a notification to Telegram. Classification is hybrid:
+
+1. **Regular expressions classify clear cases first.** This is the primary classifier.
+2. **Only emails that no regex rule matches are sent to OpenAI** as a fallback.
+3. The AI result is **validated**; any invalid response falls back to `Unbekannt`.
+
+Because most emails are handled by the free, deterministic regex rules, API usage and cost stay low.
 
 The classification rules are written for **German-language** application emails, and the status values are stored in German.
+
+**Version:** v0.3.0
 
 ---
 
@@ -10,6 +20,7 @@ The classification rules are written for **German-language** application emails,
 
 - [Features](#features)
 - [Email Classification Categories](#email-classification-categories)
+- [AI Fallback Classification](#ai-fallback-classification)
 - [Architecture](#architecture)
 - [How the Workflow Works](#how-the-workflow-works)
 - [Requirements](#requirements)
@@ -19,6 +30,7 @@ The classification rules are written for **German-language** application emails,
 - [Importing the Workflow into n8n](#importing-the-workflow-into-n8n)
 - [Credential Configuration](#credential-configuration)
 - [Telegram Configuration](#telegram-configuration)
+- [OpenAI Configuration](#openai-configuration)
 - [Testing](#testing)
 - [Known Limitations](#known-limitations)
 - [Security](#security)
@@ -32,56 +44,104 @@ The classification rules are written for **German-language** application emails,
 - **IMAP email trigger** – polls a mailbox for new emails
 - **Field extraction** – extracts sender, subject and plain-text body
 - **Normalized search text** – builds a lowercase `searchText` field from subject and body
-- **Rule-based classification** – n8n `Switch` node with regex rules, no AI required
+- **Rule-based classification** – n8n `Switch` node with regex rules as the primary classifier
+- **AI fallback** – only emails that no regex rule matches are classified by OpenAI
+- **Validated AI output** – only the five allowed status values are accepted; anything else becomes `Unbekannt`
+- **Fail-safe** – OpenAI errors or malformed responses do not stop the workflow
 - **Five status categories** – `Bewerbung`, `Einladung`, `Zusage`, `Absage`, `Unbekannt`
 - **PostgreSQL persistence** – every classified email is stored in the `bewerbungen` table
-- **Telegram notification** – sends a message with status, sender, subject and text
+- **Telegram notification** – sends a message with the final status, sender, subject and text
 
 ---
 
 ## Email Classification Categories
 
-| Status      | Meaning (English)                      | Example trigger phrases (German)                                                 |
-|-------------|----------------------------------------|----------------------------------------------------------------------------------|
-| `Absage`    | Rejection                              | `leider`, `absage`, `andere bewerber`, `anders entschieden`                      |
-| `Einladung` | Interview invitation                   | `vorstellungsgespräch`, `interview`, `telefoninterview`, `termin vereinbaren`    |
-| `Zusage`    | Job offer / acceptance                 | `zusage`, `stellenangebot`, `arbeitsvertrag`, `willkommen im team`               |
-| `Bewerbung` | Application received / acknowledgement | `bewerbung eingegangen`, `vielen dank für ihre bewerbung`, `unterlagen erhalten` |
-| `Unbekannt` | Unknown – no rule matched              | *(fallback output)*                                                              |
+| Workflow Status | Meaning                                | Example trigger phrases (German)                                                 |
+|-----------------|----------------------------------------|----------------------------------------------------------------------------------|
+| `Absage`        | Rejection                              | `leider`, `absage`, `andere bewerber`, `anders entschieden`                      |
+| `Einladung`     | Interview invitation                   | `vorstellungsgespräch`, `interview`, `telefoninterview`, `termin vereinbaren`    |
+| `Zusage`        | Positive response or job offer         | `zusage`, `stellenangebot`, `arbeitsvertrag`, `willkommen im team`               |
+| `Bewerbung`     | Application received or under review   | `bewerbung eingegangen`, `vielen dank für ihre bewerbung`, `unterlagen erhalten` |
+| `Unbekannt`     | Unknown or unclassified                | *(fallback output, sent to the AI classifier)*                                   |
+
+**Status values are intentionally German.** They are the exact strings written by the `Set` nodes and stored in the `status` column of the `bewerbungen` table. Do not rename or translate them: existing database rows, SQL queries and Telegram messages depend on these values. The [AI fallback](#ai-fallback-classification) returns the same values, so every classification, regex or AI, ends up as exactly one of `Bewerbung`, `Einladung`, `Zusage`, `Absage` or `Unbekannt`.
 
 The full regular expressions are defined in the `Switch` node of the workflow.
 
-**Rule order matters.** The `Switch` node evaluates the rules in the order listed above (`Absage` → `Einladung` → `Zusage` → `Bewerbung`) and routes each email to the **first** matching output. Emails that match no rule go to the `Unbekannt` fallback output. For example, an email containing both *"vielen dank für ihre bewerbung"* and *"leider"* is classified as `Absage`.
+**Rule order matters.** The `Switch` node evaluates the rules in the order listed above (`Absage` → `Einladung` → `Zusage` → `Bewerbung`) and routes each email to the **first** matching output. Emails that match no rule go to the `Unbekannt` fallback output and are then classified by the [AI fallback](#ai-fallback-classification). For example, an email containing both *"vielen dank für ihre bewerbung"* and *"leider"* is classified as `Absage`.
+
+---
+
+## AI Fallback Classification
+
+The AI is **only a fallback**. It never overrides a regex match, and emails that were already classified by regex are never sent to OpenAI.
+
+| Status      | Definition used in the AI prompt                                                                                       |
+|-------------|------------------------------------------------------------------------------------------------------------------------|
+| `Bewerbung` | The employer confirms that the application was received or is currently being reviewed.                               |
+| `Einladung` | The applicant is invited to an interview, phone interview, video interview, meeting or similar recruiting conversation. |
+| `Zusage`    | The applicant receives a job offer, employment offer, contract offer or clearly positive hiring decision.             |
+| `Absage`    | The employer rejects the application or states that they continue with other candidates.                              |
+| `Unbekannt` | The email cannot be classified reliably or is not related to a job application.                                       |
+
+**How it works:**
+
+- **Node:** the official n8n OpenAI node (`@n8n/n8n-nodes-langchain.openAi`, version 2.3, *Message a Model*), which uses the OpenAI Responses API.
+- **Input:** the email subject and the plain-text body, truncated to the first 4,000 characters to limit cost.
+- **Prompt:** written in English. It lists the five definitions above, tells the model not to invent information, and treats the email content as untrusted data.
+- **Output values stay German:** although the prompt is in English, the model must answer with one of the existing German status values. The JSON schema and the validation node enforce this, so the database, SQL queries and Telegram messages work unchanged.
+- **Deterministic settings:** temperature `0`, at most 50 output tokens, and a JSON schema output format that restricts `status` to the five allowed values. `store` is disabled so OpenAI does not keep the response for later retrieval.
+- **Expected output:** `{"status": "Absage"}` (or one of the other allowed values).
+- **Default model:** `gpt-4.1-mini`. You can change it in the `OpenAI Classifier` node. If you select a model that does not support the `temperature` parameter, remove that option.
+
+**Validation** (`Validate AI Result` Code node):
+
+- Accepts only the exact values `Bewerbung`, `Einladung`, `Zusage`, `Absage` and `Unbekannt`.
+- Falls back to `Unbekannt` if the response is missing, is not valid JSON, has no `status`, or contains any other value.
+- The OpenAI node is set to **continue on error** (with one retry), so an API error, timeout or quota problem produces `Unbekannt` instead of stopping the workflow.
+- Restores the original email fields (`from`, `subject`, `text`) so PostgreSQL and Telegram receive the same data as for regex matches.
+
+**Internal field `classificationSource`:** each item carries `regex` or `ai` inside the workflow, which is useful when inspecting executions in n8n. It is **not** stored in the database, and the schema is unchanged.
+
+AI classification is not perfectly accurate. It reduces the number of `Unbekannt` results, but individual emails can still be misclassified.
 
 ---
 
 ## Architecture
 
 ```text
- IMAP Email Trigger
-         |
-         v
-    Edit Fields          (subject, from, text, searchText)
-         |
-         v
-   Switch / Regex        (first matching rule wins)
-         |
-   +-----+------+--------+----------+-----------+
-   |            |        |          |           |
-   v            v        v          v           v
- Absage    Einladung   Zusage   Bewerbung   Unbekannt    (Set Status)
-   |            |        |          |           |
-   +-----+------+--------+----------+-----------+
-         |
-         v
-       Merge             (5 inputs)
-         |
-         v
-     PostgreSQL          (INSERT into bewerbungen)
-         |
-         v
-      Telegram           (notification)
+    IMAP Email Trigger
+            |
+            v
+       Edit Fields              (subject, from, text, searchText)
+            |
+            v
+     Switch / Regex             (first matching rule wins)
+       |          |
+    matched     unknown
+       |          |
+       |          v
+       |     Unbekannt          (Set Status, default)
+       |          |
+       |          v
+       |     OpenAI Classifier  (fallback only)
+       |          |
+       |          v
+       |     Validate AI Result (invalid -> Unbekannt)
+       |          |
+       +----------+
+            |
+            v
+          Merge                 (5 inputs)
+            |
+            v
+       PostgreSQL               (INSERT into bewerbungen)
+            |
+            v
+        Telegram                (notification)
 ```
+
+The `matched` path consists of the four regex routes `Absage`, `Einladung`, `Zusage` and `Bewerbung`, each with its own Set Status node.
 
 ---
 
@@ -102,11 +162,13 @@ The full regular expressions are defined in the `Switch` node of the workflow.
 
 3. **Switch / Regex** – A `Switch` node tests `searchText` against one regex per category and routes the item to the first matching output, or to the `Unbekannt` fallback output.
 
-4. **Set Status** – One `Set` node per category (`Absage`, `Einladung`, `Zusage`, `Bewerbung`, `Unbekannt`) adds a `status` field while keeping all other fields.
+4. **Set Status** – One `Set` node per category (`Absage`, `Einladung`, `Zusage`, `Bewerbung`, `Unbekannt`) adds a `status` field while keeping all other fields. The four regex routes also set `classificationSource = regex`.
 
-5. **Merge** – A `Merge` node with five inputs combines all branches into a single stream.
+5. **AI fallback** – Only items from the `Unbekannt` route continue to the `OpenAI Classifier` node. The `Validate AI Result` Code node checks the response, sets the final `status` and `classificationSource = ai`, and restores the original email fields. See [AI Fallback Classification](#ai-fallback-classification).
 
-6. **PostgreSQL** – The `Insert rows in a table` node writes to `public.bewerbungen`:
+6. **Merge** – A `Merge` node with five inputs combines the four regex branches and the validated AI branch into a single stream.
+
+7. **PostgreSQL** – The `Insert rows in a table` node writes to `public.bewerbungen`:
 
    | Column      | Value                 |
    |-------------|-----------------------|
@@ -117,7 +179,7 @@ The full regular expressions are defined in the `Switch` node of the workflow.
 
    `id`, `received_at` and `created_at` are filled by database defaults.
 
-7. **Telegram** – The `Send a text message` node sends a notification built from the inserted row:
+8. **Telegram** – The `Send a text message` node sends a notification built from the inserted row. It shows the final status, regardless of whether it came from regex or the AI fallback. No prompts or raw AI output are included:
 
    ```text
    📩 Neue Bewerbungs-Mail  Status: <status>  Von: <sender>  Betreff: <subject>  Nachricht: <mail_text>
@@ -131,6 +193,8 @@ The full regular expressions are defined in the `Switch` node of the workflow.
 - A PostgreSQL database reachable from n8n
 - An email account with IMAP access (many providers require an app password)
 - A Telegram bot token (created via [@BotFather](https://t.me/BotFather)) and the target chat ID
+- An OpenAI API key ([platform.openai.com](https://platform.openai.com/api-keys)) for the AI fallback
+- n8n with the OpenAI node version 2.3 (developed against n8n 2.39)
 
 ---
 
@@ -168,7 +232,7 @@ n8n-job-application-mail-tracker/
 
 3. Set up the database ([PostgreSQL Setup](#postgresql-setup)).
 4. Import the workflow ([Importing the Workflow into n8n](#importing-the-workflow-into-n8n)).
-5. Configure credentials ([Credential Configuration](#credential-configuration)) and Telegram ([Telegram Configuration](#telegram-configuration)).
+5. Configure credentials ([Credential Configuration](#credential-configuration)), Telegram ([Telegram Configuration](#telegram-configuration)) and OpenAI ([OpenAI Configuration](#openai-configuration)).
 6. Test the workflow ([Testing](#testing)), then activate it in n8n.
 
 ---
@@ -232,6 +296,7 @@ Create the following credentials in n8n (**Credentials → Add Credential**) and
 | `Email Trigger (IMAP)`   | IMAP            | Host, port (usually `993`), user, password, SSL/TLS |
 | `Insert rows in a table` | Postgres        | Host, port (`5432`), database, user, password       |
 | `Send a text message`    | Telegram API    | Bot access token                                    |
+| `OpenAI Classifier`      | OpenAI          | API key                                             |
 
 After assigning the Postgres credential, open the `Insert rows in a table` node and verify that schema `public` and table `bewerbungen` are selected.
 
@@ -251,6 +316,18 @@ After assigning the Postgres credential, open the `Insert rows in a table` node 
 
 ---
 
+## OpenAI Configuration
+
+1. Create an API key at [platform.openai.com](https://platform.openai.com/api-keys).
+2. In n8n, open the `OpenAI Classifier` node and create a new **OpenAI** credential with this key (or select an existing one).
+3. Optionally change the model in the node (default: `gpt-4.1-mini`).
+
+After import, the node shows a missing-credential warning until you do this. **No OpenAI API key or credential reference is stored in this repository**; the key lives only in the n8n credential store.
+
+To disable the AI fallback, open `Unbekannt` in n8n and connect it directly to input 5 of the `Merge` node instead of to `OpenAI Classifier`.
+
+---
+
 ## Testing
 
 ### Manual end-to-end test
@@ -267,7 +344,10 @@ After assigning the Postgres credential, open the `Insert rows in a table` node 
 | `Einladung`     | Einladung zum Gespräch | Wir möchten Sie gerne zu einem Vorstellungsgespräch einladen.                           |
 | `Zusage`        | Ihr Stellenangebot     | Wir freuen uns, Ihnen mitteilen zu können, dass wir Ihnen die Position anbieten.       |
 | `Bewerbung`     | Eingangsbestätigung    | Vielen Dank für Ihre Bewerbung. Wir prüfen Ihre Unterlagen und melden uns.             |
+| `Absage` (AI)   | Ihre Bewerbung         | Nach sorgfältiger Prüfung Ihrer Unterlagen haben wir entschieden, den Auswahlprozess mit anderen Kandidaten fortzuführen. |
 | `Unbekannt`     | Newsletter             | Hier sind die aktuellen Neuigkeiten aus unserem Unternehmen.                            |
+
+The `Absage (AI)` example matches none of the regex rules, so it is routed to the AI fallback. The newsletter also reaches the AI and is expected to stay `Unbekannt`. In the n8n execution view, the `classificationSource` field shows which classifier handled an email.
 
 ### Verify the database
 
@@ -290,8 +370,12 @@ ORDER BY total DESC;
 ## Known Limitations
 
 - **First match wins** – Each email receives exactly one status, determined by rule order (see [Email Classification Categories](#email-classification-categories)).
-- **Keyword-based** – Broad keywords such as `leider` or `interview` can cause false positives.
-- **German only** – The regex rules target German phrasing; English emails usually end up as `Unbekannt`.
+- **Keyword-based** – Broad keywords such as `leider` or `interview` can cause false positives. Regex matches are never re-checked by the AI.
+- **German regex rules** – The regex rules target German phrasing. Other emails are handled by the AI fallback.
+- **AI is not perfectly accurate** – The AI can misclassify ambiguous emails. Invalid responses and API errors are stored as `Unbekannt`, which is indistinguishable from a genuinely unknown email in the database.
+- **AI cost and availability** – Every email that reaches `Unbekannt` causes one OpenAI API request (plus one retry on failure).
+- **Email text is truncated for the AI** – Only the first 4,000 characters of the body are sent to OpenAI.
+- **Prompt injection** – Email content is untrusted. The prompt, the JSON schema and the validation restrict the result to the five allowed values, but a crafted email could still influence its own classification.
 - **Plain-text body only** – Classification uses `textPlain`; HTML-only emails are effectively classified by subject only.
 - **One Telegram message per execution** – The Telegram node has *Execute Once* enabled. If a single trigger run delivers several emails, only the first one is sent to Telegram (all of them are still stored in PostgreSQL).
 - **Long messages** – The full email text is included in the Telegram message; Telegram limits messages to 4096 characters.
@@ -307,7 +391,9 @@ ORDER BY total DESC;
 - All secrets live in the **n8n credential store**, which is encrypted with your instance's encryption key.
 - `.env` and `.env.*` files are git-ignored; only `.env.example` with placeholder values is tracked.
 - Use a dedicated PostgreSQL user with minimal privileges and an app-specific IMAP password where your provider supports it.
+- The workflow export contains **no OpenAI API key and no OpenAI credential reference**. You create the credential manually in n8n.
 - Email content is personal data: the database and the Telegram chat will contain full email texts. Protect them accordingly.
+- Emails that no regex rule matches are **sent to OpenAI** (subject and up to 4,000 characters of the body). Check that this is acceptable for your data before enabling the workflow. The node sets `store: false`; see OpenAI's data usage policies for API retention details.
 - **Before exporting and committing a modified workflow**, check that it contains no pinned data, real chat IDs or other personal information.
 
 ---
@@ -317,11 +403,11 @@ ORDER BY total DESC;
 - Use the original email date for `received_at`
 - Truncate or summarize the email text in Telegram notifications
 - Send a Telegram notification for every email instead of once per execution
-- Add English-language classification rules
+- Add English-language regex rules to reduce AI usage further
 - Prevent duplicate entries (e.g. store and check the email `Message-ID`)
 - Extract the company name and job title
 - Add error handling / an error workflow for failed database or Telegram calls
-- Optional AI-based classification as a fallback for `Unbekannt`
+- Optionally store `classificationSource` in the database for reporting
 - Dashboard or reporting on application statistics
 
 ---
