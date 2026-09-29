@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS bewerbungen (
+CREATE TABLE IF NOT EXISTS job_applications (
     id BIGSERIAL PRIMARY KEY,
     sender TEXT,
     subject TEXT,
