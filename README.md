@@ -10,7 +10,7 @@ The workflow reads incoming emails via IMAP, classifies them, stores the result 
 
 Because most emails are handled by the free, deterministic regex rules, API usage and cost stay low.
 
-The regex rules are written for **German-language** application emails; everything else (status values, database, notifications) is in English.
+The regex rules recognize common **German and English** phrasing in application emails.
 
 **Version:** v0.4.0
 
@@ -56,19 +56,19 @@ The regex rules are written for **German-language** application emails; everythi
 
 ## Email Classification Categories
 
-| Workflow Status | Meaning                                | Example trigger phrases (German)                                                 |
-|-----------------|----------------------------------------|----------------------------------------------------------------------------------|
-| `Rejection`        | Rejection                              | `leider`, `absage`, `andere bewerber`, `anders entschieden`                      |
-| `Invitation`     | Interview invitation                   | `vorstellungsgespräch`, `interview`, `telefoninterview`, `termin vereinbaren`    |
-| `Offer`        | Positive response or job offer         | `zusage`, `stellenangebot`, `arbeitsvertrag`, `willkommen im team`               |
-| `Application`     | Application received or under review   | `bewerbung eingegangen`, `vielen dank für ihre bewerbung`, `unterlagen erhalten` |
-| `Unknown`     | Unknown or unclassified                | *(fallback output, sent to the AI classifier)*                                   |
+| Workflow Status | Meaning                              | Example trigger phrases                                         |
+|-----------------|--------------------------------------|-----------------------------------------------------------------|
+| `Rejection`     | Rejection                            | `unfortunately`, `regret to inform`, `other candidates`, `leider` |
+| `Invitation`    | Interview invitation                 | `interview`, `invite you to`, `phone screen`, `vorstellungsgespräch` |
+| `Offer`         | Positive response or job offer       | `job offer`, `pleased to offer`, `welcome to the team`, `zusage` |
+| `Application`   | Application received or under review | `application received`, `thank you for your application`, `bewerbung eingegangen` |
+| `Unknown`       | Unknown or unclassified              | *(fallback output, sent to the AI classifier)*                  |
 
 The status values are the exact strings written by the `Set` nodes and stored in the `status` column of the `job_applications` table. The [AI fallback](#ai-fallback-classification) returns the same values, so every classification, regex or AI, ends up as exactly one of `Application`, `Invitation`, `Offer`, `Rejection` or `Unknown`.
 
 The full regular expressions are defined in the `Switch` node of the workflow.
 
-**Rule order matters.** The `Switch` node evaluates the rules in the order listed above (`Rejection` → `Invitation` → `Offer` → `Application`) and routes each email to the **first** matching output. Emails that match no rule go to the `Unknown` fallback output and are then classified by the [AI fallback](#ai-fallback-classification). For example, an email containing both *"vielen dank für ihre bewerbung"* and *"leider"* is classified as `Rejection`.
+**Rule order matters.** The `Switch` node evaluates the rules in the order listed above (`Rejection` → `Invitation` → `Offer` → `Application`) and routes each email to the **first** matching output. Emails that match no rule go to the `Unknown` fallback output and are then classified by the [AI fallback](#ai-fallback-classification). For example, an email containing both *"thank you for your application"* and *"unfortunately"* is classified as `Rejection`.
 
 ---
 
@@ -276,23 +276,6 @@ CREATE TABLE IF NOT EXISTS job_applications (
 );
 ```
 
-
-### Upgrading from v0.3.x
-
-v0.4.0 renamed the table and the status values to English. Migrate an existing database before importing the new workflow:
-
-```sql
-ALTER TABLE bewerbungen RENAME TO job_applications;
-ALTER SEQUENCE bewerbungen_id_seq RENAME TO job_applications_id_seq;
-UPDATE job_applications SET status = CASE status
-    WHEN 'Bewerbung' THEN 'Application'
-    WHEN 'Einladung' THEN 'Invitation'
-    WHEN 'Zusage'    THEN 'Offer'
-    WHEN 'Absage'    THEN 'Rejection'
-    WHEN 'Unbekannt' THEN 'Unknown'
-    ELSE status END;
-```
-
 ---
 
 ## Importing the Workflow into n8n
@@ -355,14 +338,14 @@ To disable the AI fallback, open `Unknown` in n8n and connect it directly to inp
 
 ### Example emails
 
-| Expected status | Subject                | Body                                                                                    |
-|-----------------|------------------------|-----------------------------------------------------------------------------------------|
-| `Rejection`        | Ihre Bewerbung         | Leider müssen wir Ihnen mitteilen, dass wir uns für andere Bewerber entschieden haben. |
-| `Invitation`     | Einladung zum Gespräch | Wir möchten Sie gerne zu einem Vorstellungsgespräch einladen.                           |
-| `Offer`        | Ihr Stellenangebot     | Wir freuen uns, Ihnen mitteilen zu können, dass wir Ihnen die Position anbieten.       |
-| `Application`     | Eingangsbestätigung    | Vielen Dank für Ihre Bewerbung. Wir prüfen Ihre Unterlagen und melden uns.             |
-| `Rejection` (AI)   | Ihre Bewerbung         | Nach sorgfältiger Prüfung Ihrer Unterlagen haben wir entschieden, den Auswahlprozess mit anderen Kandidaten fortzuführen. |
-| `Unknown`     | Newsletter             | Hier sind die aktuellen Neuigkeiten aus unserem Unternehmen.                            |
+| Expected status  | Subject              | Body                                                                                  |
+|------------------|----------------------|---------------------------------------------------------------------------------------|
+| `Rejection`      | Your application     | We regret to inform you that we have decided to move forward with other candidates. |
+| `Invitation`     | Interview invitation | We would like to invite you to an interview.                                          |
+| `Offer`          | Your job offer       | We are pleased to offer you the position.                                             |
+| `Application`    | Application received | Thank you for your application. We are reviewing your documents and will get back to you. |
+| `Rejection` (AI) | Your application     | After careful consideration, we have chosen another applicant for this role.          |
+| `Unknown`        | Newsletter           | Here is the latest news from our company.                                             |
 
 The `Rejection (AI)` example matches none of the regex rules, so it is routed to the AI fallback. The newsletter also reaches the AI and is expected to stay `Unknown`. In the n8n execution view, the `classificationSource` field shows which classifier handled an email.
 
@@ -387,8 +370,8 @@ ORDER BY total DESC;
 ## Known Limitations
 
 - **First match wins** – Each email receives exactly one status, determined by rule order (see [Email Classification Categories](#email-classification-categories)).
-- **Keyword-based** – Broad keywords such as `leider` or `interview` can cause false positives. Regex matches are never re-checked by the AI.
-- **German regex rules** – The regex rules target German phrasing. Other emails are handled by the AI fallback.
+- **Keyword-based** – Broad keywords such as `unfortunately` or `interview` can cause false positives. Regex matches are never re-checked by the AI.
+- **German and English regex rules** – The regex rules cover common German and English phrasing. Emails in other languages are handled by the AI fallback.
 - **AI is not perfectly accurate** – The AI can misclassify ambiguous emails. Invalid responses and API errors are stored as `Unknown`, which is indistinguishable from a genuinely unknown email in the database.
 - **AI cost and availability** – Every email that reaches `Unknown` causes one OpenAI API request (plus one retry on failure).
 - **Email text is truncated for the AI** – Only the first 4,000 characters of the body are sent to OpenAI.
@@ -420,7 +403,6 @@ ORDER BY total DESC;
 - Use the original email date for `received_at`
 - Truncate or summarize the email text in Telegram notifications
 - Send a Telegram notification for every email instead of once per execution
-- Add English-language regex rules to reduce AI usage further
 - Prevent duplicate entries (e.g. store and check the email `Message-ID`)
 - Extract the company name and job title
 - Add error handling / an error workflow for failed database or Telegram calls
